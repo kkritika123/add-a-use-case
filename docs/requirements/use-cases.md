@@ -1473,12 +1473,24 @@ Details:
 7. Use case ends.
 
 **Extensions:**
+- **3a. The course admin or instructor is not permitted to deactivate this student (BR-student-lifecycle):**
+  - 3a1. The system denies the deactivation and alerts the course admin or instructor that she is not permitted to deactivate this student.
+  - 3a2. The student is unchanged. Use case ends.
+- **3b. The student is already deactivated:**
+  - 3b1. The system alerts the course admin or instructor that the student is already deactivated.
+  - 3b2. The student and her records are unchanged. Use case ends.
+- **5a. The course admin or instructor cancels the deactivation:**
+  - 5a1. The system closes the warning without saving any change; the student remains active.
+  - 5a2. The course admin or instructor returns to step 2 of the normal flow.
+
 **Priority:** Low
 **Frequency of Use:** Rare. Occurs occasionally when a student withdraws from a course section.
-**Business Rules:** BR-student-lifecycle
+**Business Rules:** BR-student-lifecycle, BR-submission-owed, BR-inactive-evaluatee
 
 **Associated Information:**
 - Consequence of the deactivation: The student will no longer be able to log in or submit weekly activity reports and peer evaluations, but the student's account and her previously submitted work are kept in the system. Deactivation will NOT remove the student from the system, and the account can be reactivated in the future (UC-STU-reactivate-student: Reactivate a student). This is distinct from deletion (UC-STU-delete-student: Delete a student), which is a physical, unrecoverable delete. The course admin or instructor shall be able to cancel the use case at any time prior to submitting it.
+- The student stays on her team, marked inactive; her team history and past records stay linked to the team. Her teammates no longer owe or can submit peer evaluations of her (BR-submission-owed, BR-inactive-evaluatee).
+- Deactivation takes effect immediately, including for a student who is logged in at that moment: her next request is denied and she is returned to the login page (FR-SEC-active-account).
 
 **Related Use Cases:** UC-STU-delete-student: Delete a student; UC-STU-reactivate-student: Reactivate a student
 **Assumptions:**
@@ -1517,6 +1529,7 @@ Details:
 
 **Associated Information:**
 - The course admin or instructor shall be able to cancel the use case at any time prior to submitting it.
+- A reactivated student returns to the team she was on when deactivated; no reassignment is needed (UC-STU-deactivate-student keeps her on her team).
 
 **Related Use Cases:** UC-STU-delete-student: Delete a student; UC-STU-deactivate-student: Deactivate a student
 **Assumptions:**

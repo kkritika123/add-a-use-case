@@ -157,10 +157,10 @@ stateDiagram-v2
 
 | Endpoint or job | Caller (who may) | Request | Success | Errors, by extension |
 |---|---|---|---|---|
-| `PATCH /api/v1/students/{studentId}/deactivate` (new) | An instructor assigned to the student's course section, or the course admin who owns its course (BR-student-lifecycle): `StudentAdministratorAuthorizationManager`; route rule added before the `denyAll()` catch-all | none | `200`, `StudentDto` with `enabled: false`, team unchanged | 3a: `403` (also for a student, herself included, and for an unknown id: the route refuses first). 3b: `409`, "The student is already deactivated."; the record is unchanged |
+| `PATCH /api/v1/students/{studentId}/deactivate` (new) | An instructor assigned to the student's course section, or the course admin who owns its course (BR-student-lifecycle): `StudentAdministratorAuthorizationManager`; its own `HttpMethod.PATCH` matcher, placed with the other `/students/{studentId}` rules, above the `denyAll()` catch-all | none | `200`, `StudentDto` with `enabled: false`, team unchanged | 3a: `403` / `StatusCode.FORBIDDEN` (also for a student, herself included, and for an unknown id: the route refuses first). 3b: `409` / `StatusCode.CONFLICT`, "The student is already deactivated."; the record is unchanged |
 | Every authenticated API route (changed) | A JWT holder | — | as today | Account deactivated after the token was issued, or no longer present: `401` |
 | `PUT /api/v1/students/{studentId}` (changed) | `UserOwnershipAuthorizationManager`: the student herself, an assigned instructor, or the owning course admin | `enabled: true` reactivates when the caller holds `ROLE_instructor` (interim); `enabled: false` is ignored | as today | — |
-| `POST /api/v1/evaluations` (changed) | as today | as today | as today | Evaluatee deactivated: `400`, "<first name> is deactivated and can no longer be evaluated." |
+| `POST /api/v1/evaluations` (changed) | as today | as today: one peer evaluation per request (the form sends one `POST` per teammate) | as today | Evaluatee deactivated: `IllegalArgumentException` → `400` / `StatusCode.INVALID_ARGUMENT`, "<first name> is deactivated and can no longer be evaluated."; only that request fails, so the other teammates' evaluations are saved |
 | `GET /api/v1/evaluations/sections/{sectionId}/week/{week}` (changed) | as today | as today | A deactivated student is listed only for a week with peer evaluations of her recorded (BR-inactive-evaluatee) | as today |
 
 `PUT /api/v1/evaluations/{evaluationId}` is unchanged. It still updates an evaluation of a deactivated student written before deactivation, inside the window, because BR-inactive-evaluatee blocks only *new* evaluations.
@@ -188,7 +188,21 @@ The student herself can pass the `PUT` route, but she can't reactivate herself: 
 
 For the same reason, `UserOwnershipAuthorizationManager`'s student branch now admits the owning course admin, so step 2 (view the student) works for her. That manager also guards `PUT` and `DELETE /students/{studentId}` and three evaluation `GET`s (by `evaluatorId` or `studentId`). Each of those now admits the owning course admin too, which BR-section-scoped-access already grants her (`DELETE` keeps its own service-level rules).
 
-**Already deactivated is `409`, not an idempotent `200`.** Extension 3b requires an alert.
+**The route rule is the scope check.** The URL names the student and the route rule checks the caller against that student's course section and course, so `deactivateStudent` loads by that `studentId` (`findById`). This follows the existing `/students/{studentId}` routes.
+- Rejected: a caller-scoped finder, which would repeat the route rule's check with nothing left to scope (no container id and no body ids).
+
+**Already deactivated is `409`, not an idempotent `200`.** Extension 3b requires an alert. The use case places 3b at step 3, but the form shows Deactivate only for an active student, so 3b is reached only from a stale view or a race. The server checks it when the `PATCH` arrives, after Confirm.
+- Rejected: reloading the student before opening the box. That narrows the race but doesn't close it, so the server check is needed anyway.
+
+**What the form does at each step** (`EditStudentForm.vue`):
+- **Who sees the buttons:** Deactivate and Reactivate are shown only to a user holding `ROLE_instructor`, never in a student's own profile edit. So in the UI, 3a is reached only when an instructor's access changed after the page loaded. A `403` follows the shared client contract (`request.ts` routes to the forbidden page), which tells her she isn't permitted (3a1).
+- **Step 4:** an `ElMessageBox.confirm` of type `warning`, titled "Deactivate <first name> <last name>?", with buttons **Deactivate** and **Cancel** and this text:
+
+  > This student will no longer be able to log in or submit weekly activity reports and peer evaluations. The account and all submitted work are kept, and the student stays on the team, marked inactive. Teammates will no longer owe or be able to submit peer evaluations of this student. This takes effect immediately, even if the student is logged in now. You can reactivate the student later. This is not deletion, which permanently removes a student and the student's work.
+
+- **Separate from Save:** the `PATCH` is separate from the form's Save. Unsaved edits in the form are neither saved nor discarded.
+- **Step 6:** `ElMessage.success("<first name> <last name> has been deactivated")`. The dialog stays open and shows the returned status. Closing it emits `close-dialog`, as Cancel does today.
+- **3b:** the shared handler shows the `409` message as a toast, then the form reloads the student, so it shows deactivated and Reactivate.
 
 **The team is kept, and nothing cascades.** `deactivateStudent` changes only `enabled`. BR-inactive-evaluatee and BR-submission-owed are enforced where those records are created or computed: the evaluation `POST`, the form, the section report and `SubmissionStatusService`.
 - Rejected: removing her from her team, which would lose her team history and break reactivation.
@@ -197,7 +211,7 @@ For the same reason, `UserOwnershipAuthorizationManager`'s student branch now ad
 - Rejected: always omitting her, which hides evaluations her teammates already submitted.
 - Rejected: always listing her, which shows an empty row for every later week.
 
-**The form offers no new evaluation of her but keeps an existing one.** On a new submission her row is left out, and the `POST` refuses her anyway. When the evaluator already saved evaluations for the week, the form shows the saved set, so an evaluation of her written before deactivation can still be edited through `PUT`.
+**The form offers no new evaluation of her but keeps an existing one.** The teammate list comes from `findStudentsByTeamId`, whose `StudentDto` already carries `enabled`. On a new submission her row is left out, and the `POST` refuses her anyway. When the evaluator already saved evaluations for the week, the form shows the saved set, so an evaluation of her written before deactivation can still be edited through `PUT`.
 - Rejected: hiding her everywhere, which would make the allowed edit reachable only through the API.
 
 **No email.** Neither deactivation nor the interim reactivation sends one. The use case names no notification, and UC-STU-reactivate-student owns the reactivation notice.
@@ -233,9 +247,17 @@ No delta. `PeerEvaluationUser.enabled` already exists as the SRS's [Business Dom
 | BR-inactive-evaluatee, report | integration | In the section report the deactivated student appears for a week with evaluations of her and is absent for a week with none; an active student with no evaluations still appears |
 | BR-submission-owed | (existing) | `SubmissionStatusServiceIntegrationTest` already covers a deactivated student |
 
+**Test setup.** The seed has no instructor who is unassigned in course 1 and no owning course admin who is unassigned from a course section: Bingyang Wei owns course 1 and is assigned to course sections 1 and 2. The authorization tests arrange those cases inside the test transaction, which rolls back, instead of adding seed rows:
+- **Owning course admin, not assigned:** remove Bingyang Wei from the student's course section.
+- **Unassigned instructor:** remove Bill Gates from the student's course section.
+
+Tim Cook (course admin of course 3) is the course admin of another course. John Smith (course section 2, team 1, with WARs and peer evaluations) is the student to deactivate.
+
 ## Open questions / risks
 
 - **The interim reactivation path is temporary.** UC-STU-reactivate-student's design must remove `updateStudent`'s `enabled: true` handling and the Reactivate button, and add its own endpoint and email.
 - **Wider admission on routes that share `UserOwnershipAuthorizationManager`.** The owning course admin now passes five other student-named routes as well (see *Who may deactivate*). This is consistent with BR-section-scoped-access, but it changes routes this use case doesn't name.
+- **A partly saved week** (some teammates evaluated, some not) shows only the saved rows, as today. The form saves the whole set at once, so this arises only from direct API use or a teammate added mid-week. That's existing behavior, outside this use case.
+- **The converter runs wherever a `Bearer` token is sent.** A deactivated user with a stale token gets `401` even on a `permitAll()` route, until the SPA clears the token (it does on the first `401`). Login uses HTTP Basic and is unaffected.
 - **A leaked token for an active account** is still valid for its 2 hours ([TD-jwt-revocation](architectural-design.md#risks-and-technical-debt)). The per-request check covers deactivation only.
 - **OI-33 (b)** describes deactivation as the `updateStudent` toggle. That wording goes stale once this is built, and `/implement` updates it.

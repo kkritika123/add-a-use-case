@@ -14,7 +14,8 @@ import java.util.function.Supplier;
 
 /**
  * Guards the routes that name a single user in the path: the user themselves may pass, and so may the
- * instructor or course admin above them.
+ * instructor or course admin above them. For a student that is an instructor assigned to her course section or
+ * the course admin who owns its course (BR-section-scoped-access); either alone would shut out the other.
  *
  * <p>The routes spell that user three ways, so the manager dispatches on which variable the matched route
  * bound: {@code studentId} and {@code evaluatorId} both name a student (an evaluator is the student writing
@@ -42,6 +43,7 @@ public class UserOwnershipAuthorizationManager implements AuthorizationManager<R
         if (studentId != null) {
             return new AuthorizationDecision(
                     this.studentSecurityService.isCurrentUserInstructorOfStudentSection(studentId)
+                            || this.studentSecurityService.isCurrentUserAdminOfStudentCourse(studentId)
                             || this.studentSecurityService.isStudentSelf(studentId));
         }
 

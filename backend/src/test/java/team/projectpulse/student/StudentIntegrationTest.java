@@ -1,7 +1,12 @@
 package team.projectpulse.student;
 
+import jakarta.persistence.EntityManager;
 import tools.jackson.databind.json.JsonMapper;
 import team.projectpulse.AbstractIntegrationTest;
+import team.projectpulse.instructor.Instructor;
+import team.projectpulse.instructor.InstructorRepository;
+import team.projectpulse.section.Section;
+import team.projectpulse.section.SectionRepository;
 import team.projectpulse.system.StatusCode;
 import org.hamcrest.Matchers;
 import org.json.JSONObject;
@@ -35,6 +40,24 @@ class StudentIntegrationTest extends AbstractIntegrationTest {
 
     @Autowired
     JsonMapper jsonMapper;
+
+    @Autowired
+    SectionRepository sectionRepository;
+
+    @Autowired
+    InstructorRepository instructorRepository;
+
+    @Autowired
+    StudentRepository studentRepository;
+
+    @Autowired
+    EntityManager entityManager;
+
+    static final int BINGYANG = 1; // Course admin of course 1, assigned to course sections 1 and 2
+
+    static final int BILL = 2; // Instructor assigned to course sections 1 and 2
+
+    static final int JOHNS_SECTION = 2;
 
     String adminToken;
 
@@ -123,6 +146,38 @@ class StudentIntegrationTest extends AbstractIntegrationTest {
                 .andExpect(jsonPath("$.code").value(StatusCode.FORBIDDEN))
                 .andExpect(jsonPath("$.message").value("No permission."))
                 .andExpect(jsonPath("$.data").value("Access Denied"));
+    }
+
+    /**
+     * Unassigns an instructor from John's course section (section 2) inside the test transaction, which rolls back.
+     * The seed has no owning course admin who is unassigned, nor an unassigned instructor in course 1.
+     */
+    private void unassignFromJohnsSection(Integer instructorId) {
+        Section section = this.sectionRepository.findById(JOHNS_SECTION).orElseThrow();
+        Instructor instructor = this.instructorRepository.findById(instructorId).orElseThrow();
+        section.removeInstructor(instructor);
+        this.entityManager.flush();
+    }
+
+    @Test
+    @DisplayName("The owning course admin, not assigned to the student's course section, views the student")
+    void testOwningCourseAdminNotAssignedFindsStudentInfoById() throws Exception {
+        unassignFromJohnsSection(BINGYANG);
+
+        this.mockMvc.perform(get(this.baseUrl + "/students/4").accept(MediaType.APPLICATION_JSON).header(HttpHeaders.AUTHORIZATION, this.adminToken))
+                .andExpect(jsonPath("$.flag").value(true))
+                .andExpect(jsonPath("$.code").value(StatusCode.SUCCESS))
+                .andExpect(jsonPath("$.data.id").value(4));
+    }
+
+    @Test
+    @DisplayName("An instructor no longer assigned to the student's course section cannot view the student")
+    void testUnassignedInstructorFindStudentInfoById() throws Exception {
+        unassignFromJohnsSection(BILL);
+
+        this.mockMvc.perform(get(this.baseUrl + "/students/4").accept(MediaType.APPLICATION_JSON).header(HttpHeaders.AUTHORIZATION, this.instructorBillToken))
+                .andExpect(jsonPath("$.flag").value(false))
+                .andExpect(jsonPath("$.code").value(StatusCode.FORBIDDEN));
     }
 
     @Test

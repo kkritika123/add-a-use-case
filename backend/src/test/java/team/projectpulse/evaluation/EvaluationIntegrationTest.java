@@ -6,6 +6,8 @@ import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import team.projectpulse.AbstractIntegrationTest;
 import team.projectpulse.evaluation.dto.PeerEvaluationDto;
 import team.projectpulse.evaluation.dto.RatingDto;
+import team.projectpulse.student.Student;
+import team.projectpulse.student.StudentRepository;
 import team.projectpulse.system.StatusCode;
 import org.hamcrest.Matchers;
 import org.json.JSONObject;
@@ -33,6 +35,7 @@ import static org.springframework.security.test.web.servlet.request.SecurityMock
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultHandlers.print;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @DisplayName("Integration tests for Evaluation API endpoints")
 public class EvaluationIntegrationTest extends AbstractIntegrationTest {
@@ -58,6 +61,9 @@ public class EvaluationIntegrationTest extends AbstractIntegrationTest {
 
     @Autowired
     EntityManager entityManager;
+
+    @Autowired
+    StudentRepository studentRepository;
 
     String adminBingyangToken;
 
@@ -258,6 +264,86 @@ public class EvaluationIntegrationTest extends AbstractIntegrationTest {
                 .andExpect(jsonPath("$.flag").value(false))
                 .andExpect(jsonPath("$.code").value(StatusCode.INVALID_ARGUMENT))
                 .andExpect(jsonPath("$.message").value("Only a student may submit a peer evaluation."));
+    }
+
+    // ------------------------------------------------------------------------------------------------------
+    // BR-inactive-evaluatee (UC-STU-deactivate-student): a deactivated student stays on her team, but her
+    // teammates can no longer submit a new evaluation of her. Eric (5) is deactivated inside the test transaction.
+    // ------------------------------------------------------------------------------------------------------
+
+    private static final int ERIC = 5;
+
+    private List<RatingDto> fullRatings() {
+        return List.of(
+                new RatingDto(null, 1, 4.0),
+                new RatingDto(null, 2, 9.0),
+                new RatingDto(null, 3, 7.0),
+                new RatingDto(null, 4, 10.0),
+                new RatingDto(null, 5, 5.0),
+                new RatingDto(null, 6, 6.0)
+        );
+    }
+
+    private void deactivateEric() {
+        Student eric = this.studentRepository.findById(ERIC).orElseThrow();
+        eric.setEnabled(false);
+        this.studentRepository.save(eric);
+        this.entityManager.flush();
+    }
+
+    private void fixClockAt(LocalDate date) {
+        Clock fixedClock = Clock.fixed(date.atStartOfDay(ZoneId.systemDefault()).toInstant(), ZoneId.systemDefault());
+        given(this.clock.instant()).willReturn(fixedClock.instant());
+        given(this.clock.getZone()).willReturn(fixedClock.getZone());
+    }
+
+    @Test
+    @DisplayName("BR-inactive-evaluatee: a new evaluation of a deactivated teammate is refused")
+    void testStudentJohnCannotEvaluateDeactivatedTeammate() throws Exception {
+        deactivateEric();
+        fixClockAt(LocalDate.of(2023, 9, 15)); // so that 2023-W36 is the previous week
+
+        PeerEvaluationDto peerEvaluationDto = new PeerEvaluationDto(null, "2023-W36", 4, "John Smith", ERIC, "Eric Hudson", fullRatings(), 41.0, "Good job", "Keep it up", null, null);
+
+        this.mockMvc.perform(post(this.baseUrl + "/evaluations").contentType(MediaType.APPLICATION_JSON).content(this.jsonMapper.writeValueAsString(peerEvaluationDto)).accept(MediaType.APPLICATION_JSON).header(HttpHeaders.AUTHORIZATION, this.studentJohnToken))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.flag").value(false))
+                .andExpect(jsonPath("$.code").value(StatusCode.INVALID_ARGUMENT))
+                .andExpect(jsonPath("$.message").value("Eric is deactivated and can no longer be evaluated."));
+    }
+
+    @Test
+    @DisplayName("BR-inactive-evaluatee: an evaluation written before deactivation can still be edited while its window is open")
+    void testStudentJohnUpdatesExistingEvaluationOfDeactivatedTeammate() throws Exception {
+        deactivateEric();
+        fixClockAt(LocalDate.of(2023, 8, 8)); // 2023-W32, so evaluation 1 (2023-W31, John of Eric) is editable
+
+        PeerEvaluationDto peerEvaluationDto = new PeerEvaluationDto(1, "2023-W31", 4, "John Smith", ERIC, "Eric Hudson", fullRatings(), 41.0, "Edited after deactivation", "Edited", null, null);
+
+        this.mockMvc.perform(put(this.baseUrl + "/evaluations/1").contentType(MediaType.APPLICATION_JSON).content(this.jsonMapper.writeValueAsString(peerEvaluationDto)).accept(MediaType.APPLICATION_JSON).header(HttpHeaders.AUTHORIZATION, this.studentJohnToken))
+                .andExpect(jsonPath("$.flag").value(true))
+                .andExpect(jsonPath("$.code").value(StatusCode.SUCCESS))
+                .andExpect(jsonPath("$.data.totalScore").value(41.0))
+                .andExpect(jsonPath("$.data.publicComment").value("Edited after deactivation"));
+    }
+
+    @Test
+    @DisplayName("BR-inactive-evaluatee: the section report lists a deactivated student only for a week with evaluations of her")
+    void testSectionReportListsDeactivatedStudentOnlyForWeeksWithEvaluations() throws Exception {
+        deactivateEric();
+
+        // 2023-W31 has evaluations of Eric, so he is still listed
+        this.mockMvc.perform(get(this.baseUrl + "/evaluations/sections/2/week/2023-W31").accept(MediaType.APPLICATION_JSON).header(HttpHeaders.AUTHORIZATION, this.adminBingyangToken))
+                .andExpect(jsonPath("$.code").value(StatusCode.SUCCESS))
+                .andExpect(jsonPath("$.data.peerEvaluationAverages", Matchers.hasSize(11)))
+                .andExpect(jsonPath("$.data.peerEvaluationAverages[*].studentId", Matchers.hasItem(ERIC)));
+
+        // 2023-W36 has no evaluations of anyone: Eric is absent, while the active students with none still appear
+        this.mockMvc.perform(get(this.baseUrl + "/evaluations/sections/2/week/2023-W36").accept(MediaType.APPLICATION_JSON).header(HttpHeaders.AUTHORIZATION, this.adminBingyangToken))
+                .andExpect(jsonPath("$.code").value(StatusCode.SUCCESS))
+                .andExpect(jsonPath("$.data.peerEvaluationAverages", Matchers.hasSize(10)))
+                .andExpect(jsonPath("$.data.peerEvaluationAverages[*].studentId", Matchers.not(Matchers.hasItem(ERIC))))
+                .andExpect(jsonPath("$.data.peerEvaluationAverages[*].studentId", Matchers.hasItem(4)));
     }
 
     @Test

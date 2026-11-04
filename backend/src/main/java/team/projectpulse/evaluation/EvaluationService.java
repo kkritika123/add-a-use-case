@@ -67,6 +67,13 @@ public class EvaluationService {
             throw new PeerEvaluationIllegalArgumentException("The evaluator and evaluatee must be on the same team.");
         }
 
+        // A deactivated student stays on her team but can no longer be evaluated (BR-inactive-evaluatee). This
+        // blocks only a new evaluation: one written before she was deactivated can still be edited through
+        // updatePeerEvaluation while its window is open.
+        if (!newPeerEvaluation.getEvaluatee().isEnabled()) {
+            throw new PeerEvaluationIllegalArgumentException(newPeerEvaluation.getEvaluatee().getFirstName() + " is deactivated and can no longer be evaluated.");
+        }
+
         // Make sure this is not a duplicate evaluation
         if (this.evaluationRepository.findByWeekAndEvaluatorIdAndEvaluateeId(newPeerEvaluation.getWeek(), newPeerEvaluation.getEvaluator().getId(), newPeerEvaluation.getEvaluatee().getId()).isPresent()) {
             throw new PeerEvaluationIllegalArgumentException("You have already submitted an evaluation for " + newPeerEvaluation.getEvaluatee().getFirstName() + " in this week.");
@@ -220,8 +227,13 @@ public class EvaluationService {
 
         report.setSectionName(this.sectionRepository.findById(sectionId).orElseThrow(() -> new ObjectNotFoundException("section", sectionId)).getSectionName());
 
-        // Get all students in the section
-        List<Student> students = this.studentRepository.findBySectionSectionId(sectionId).stream().filter(student -> student.getTeam() != null).collect(Collectors.toList());
+        // Get all students in the section who are on a team. A deactivated student is kept only for a week with
+        // peer evaluations of her recorded (BR-inactive-evaluatee): omitting her always would hide evaluations her
+        // teammates already submitted, and listing her always would show an empty row for every later week.
+        List<Student> students = this.studentRepository.findBySectionSectionId(sectionId).stream()
+                .filter(student -> student.getTeam() != null)
+                .filter(student -> student.isEnabled() || this.evaluationRepository.existsByWeekAndEvaluateeId(week, student.getId()))
+                .collect(Collectors.toList());
 
         // For each student, compute her average total score, collect all public comments and private comments, and compute rating averages for each criterion.
         students.forEach(student -> {

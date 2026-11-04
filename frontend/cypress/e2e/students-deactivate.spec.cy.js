@@ -31,7 +31,9 @@ describe('Deactivate a student', () => {
   beforeEach(() => {
     cy.login('b.gates@abc.edu', '123456')
     cy.intercept('POST', '**/students/search*', { body: page([john]) }).as('search')
-    cy.intercept('GET', '**/students/4', { body: ok('Find student successfully', john) }).as('student')
+    cy.intercept('GET', '**/students/4', { body: ok('Find student successfully', john) }).as(
+      'student'
+    )
     cy.intercept('PATCH', '**/students/4/deactivate', {
       body: ok('Deactivate student successfully', { ...john, enabled: false })
     }).as('deactivate')
@@ -56,7 +58,10 @@ describe('Deactivate a student', () => {
 
     cy.get('.deactivate-student-confirm')
       .should('contain', 'Deactivate John Smith?')
-      .and('contain', 'no longer be able to log in or submit weekly activity reports and peer evaluations')
+      .and(
+        'contain',
+        'no longer be able to log in or submit weekly activity reports and peer evaluations'
+      )
       .and('contain', 'The account and all submitted work are kept')
       .and('contain', 'stays on the team, marked inactive')
       .and('contain', 'Teammates will no longer owe or be able to submit peer evaluations')
@@ -97,7 +102,9 @@ describe('Deactivate a student', () => {
     }).as('conflict')
     openStudent()
     // The reload after the conflict finds the student deactivated
-    cy.intercept('GET', '**/students/4', { body: ok('Find student successfully', { ...john, enabled: false }) }).as('reloaded')
+    cy.intercept('GET', '**/students/4', {
+      body: ok('Find student successfully', { ...john, enabled: false })
+    }).as('reloaded')
     openConfirmation()
 
     cy.get('.deactivate-student-confirm').contains('button', 'Deactivate').click()

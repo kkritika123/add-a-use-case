@@ -195,6 +195,39 @@ class StudentServiceTest {
     }
 
     @Test
+    @DisplayName("UC-STU-deactivate-student main: the student is deactivated and nothing else changes")
+    void testDeactivateStudent() {
+        // Given
+        Student john = this.students.get(0);
+        given(this.studentRepository.findById(1)).willReturn(Optional.of(john));
+        given(this.studentRepository.save(john)).willReturn(john);
+
+        // When
+        Student result = this.studentService.deactivateStudent(1);
+
+        // Then
+        assertThat(result.isEnabled()).isFalse();
+        assertThat(result.getFirstName()).isEqualTo("John");
+        verify(this.studentRepository, times(1)).save(john);
+    }
+
+    @Test
+    @DisplayName("UC-STU-deactivate-student 3b: an already deactivated student is refused and left unchanged")
+    void testDeactivateAlreadyDeactivatedStudent() {
+        // Given
+        Student john = this.students.get(0);
+        john.setEnabled(false);
+        given(this.studentRepository.findById(1)).willReturn(Optional.of(john));
+
+        // When
+        Throwable thrown = org.assertj.core.api.Assertions.catchThrowable(() -> this.studentService.deactivateStudent(1));
+
+        // Then
+        assertThat(thrown).isInstanceOf(StudentAlreadyDeactivatedException.class).hasMessage("The student is already deactivated.");
+        verify(this.studentRepository, never()).save(any(Student.class));
+    }
+
+    @Test
     void testDeleteStudent() {
         // Given
         given(this.studentRepository.findById(1)).willReturn(Optional.of(this.students.get(0)));

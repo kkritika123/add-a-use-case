@@ -122,6 +122,24 @@ public class StudentService {
         return this.studentRepository.save(oldStudent);
     }
 
+    /**
+     * UC-STU-deactivate-student: switches the student's account off, and nothing else. She stays on her team and
+     * every record she submitted is kept (BR-student-lifecycle); BR-inactive-evaluatee and BR-submission-owed are
+     * enforced where evaluations and submission status are created or computed. The route rule has already
+     * checked the caller against this student's course section and course, so loading by id is the scoped query.
+     *
+     * @throws StudentAlreadyDeactivatedException extension 3b, the student is already deactivated
+     */
+    public Student deactivateStudent(Integer studentId) {
+        Student student = this.studentRepository.findById(studentId)
+                .orElseThrow(() -> new ObjectNotFoundException("student", studentId));
+        if (!student.isEnabled()) {
+            throw new StudentAlreadyDeactivatedException();
+        }
+        student.setEnabled(false);
+        return this.studentRepository.save(student);
+    }
+
     public void deleteStudent(Integer studentId) {
         this.studentRepository.findById(studentId)
                 .orElseThrow(() -> new ObjectNotFoundException("student", studentId));

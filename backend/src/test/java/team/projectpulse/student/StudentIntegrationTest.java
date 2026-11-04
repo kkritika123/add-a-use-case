@@ -31,6 +31,8 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultHandlers.print;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+import static org.assertj.core.api.Assertions.assertThat;
 
 @DisplayName("Integration tests for Student API endpoints")
 class StudentIntegrationTest extends AbstractIntegrationTest {
@@ -178,6 +180,140 @@ class StudentIntegrationTest extends AbstractIntegrationTest {
         this.mockMvc.perform(get(this.baseUrl + "/students/4").accept(MediaType.APPLICATION_JSON).header(HttpHeaders.AUTHORIZATION, this.instructorBillToken))
                 .andExpect(jsonPath("$.flag").value(false))
                 .andExpect(jsonPath("$.code").value(StatusCode.FORBIDDEN));
+    }
+
+    // ------------------------------------------------------------------------------------------------------
+    // UC-STU-deactivate-student: PATCH /students/{studentId}/deactivate. John Smith (4) is the student; he is in
+    // course section 2, on team 1, with WARs and peer evaluations.
+    // ------------------------------------------------------------------------------------------------------
+
+    private static final int JOHN = 4;
+
+    private ResultActions deactivate(Integer studentId, String token) throws Exception {
+        return this.mockMvc.perform(patch(this.baseUrl + "/students/" + studentId + "/deactivate").accept(MediaType.APPLICATION_JSON).header(HttpHeaders.AUTHORIZATION, token));
+    }
+
+    private long count(String jpql) {
+        return this.entityManager.createQuery(jpql, Long.class).setParameter("id", JOHN).getSingleResult();
+    }
+
+    private long johnsActivities() {
+        return count("select count(a) from Activity a where a.student.id = :id");
+    }
+
+    private long johnsEvaluations() {
+        return count("select count(e) from PeerEvaluation e where e.evaluator.id = :id or e.evaluatee.id = :id");
+    }
+
+    private boolean johnIsEnabled() {
+        this.entityManager.flush();
+        this.entityManager.clear();
+        return this.studentRepository.findById(JOHN).orElseThrow().isEnabled();
+    }
+
+    @Test
+    @DisplayName("UC-STU-deactivate-student main: an assigned instructor deactivates the student; team and records are kept")
+    void testAssignedInstructorDeactivatesStudent() throws Exception {
+        long activitiesBefore = johnsActivities();
+        long evaluationsBefore = johnsEvaluations();
+        assertThat(activitiesBefore).isPositive();
+        assertThat(evaluationsBefore).isPositive();
+
+        deactivate(JOHN, this.instructorBillToken)
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.flag").value(true))
+                .andExpect(jsonPath("$.code").value(StatusCode.SUCCESS))
+                .andExpect(jsonPath("$.message").value("Deactivate student successfully"))
+                .andExpect(jsonPath("$.data.id").value(JOHN))
+                .andExpect(jsonPath("$.data.enabled").value(false))
+                .andExpect(jsonPath("$.data.teamId").value(1));
+
+        assertThat(johnIsEnabled()).isFalse();
+        assertThat(this.studentRepository.findById(JOHN).orElseThrow().getTeam().getTeamId()).isEqualTo(1);
+        assertThat(johnsActivities()).isEqualTo(activitiesBefore);
+        assertThat(johnsEvaluations()).isEqualTo(evaluationsBefore);
+    }
+
+    @Test
+    @DisplayName("UC-STU-deactivate-student main: the owning course admin, not assigned to the course section, deactivates the student")
+    void testOwningCourseAdminNotAssignedDeactivatesStudent() throws Exception {
+        unassignFromJohnsSection(BINGYANG);
+
+        deactivate(JOHN, this.adminToken)
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.enabled").value(false));
+    }
+
+    @Test
+    @DisplayName("UC-STU-deactivate-student 3a: an instructor not assigned to the course section is refused; the student is unchanged")
+    void testUnassignedInstructorCannotDeactivateStudent() throws Exception {
+        unassignFromJohnsSection(BILL);
+
+        deactivate(JOHN, this.instructorBillToken)
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value(StatusCode.FORBIDDEN));
+        assertThat(johnIsEnabled()).isTrue();
+    }
+
+    @Test
+    @DisplayName("UC-STU-deactivate-student 3a: the course admin of another course is refused; the student is unchanged")
+    void testCourseAdminOfAnotherCourseCannotDeactivateStudent() throws Exception {
+        deactivate(JOHN, this.adminTimToken)
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value(StatusCode.FORBIDDEN));
+        assertThat(johnIsEnabled()).isTrue();
+    }
+
+    @Test
+    @DisplayName("UC-STU-deactivate-student 3a: a student, herself or a teammate, is refused; the student is unchanged")
+    void testStudentsCannotDeactivateStudent() throws Exception {
+        deactivate(JOHN, this.studentJohnToken)
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value(StatusCode.FORBIDDEN));
+        deactivate(JOHN, this.studentEricToken)
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value(StatusCode.FORBIDDEN));
+        assertThat(johnIsEnabled()).isTrue();
+    }
+
+    @Test
+    @DisplayName("UC-STU-deactivate-student 3a: an id that names no student is refused at the route")
+    void testDeactivateUnknownStudentIsForbidden() throws Exception {
+        deactivate(999999, this.adminToken)
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value(StatusCode.FORBIDDEN));
+    }
+
+    @Test
+    @DisplayName("UC-STU-deactivate-student 3b: deactivating an already deactivated student is a conflict; the student is unchanged")
+    void testDeactivateAlreadyDeactivatedStudent() throws Exception {
+        deactivate(JOHN, this.instructorBillToken).andExpect(status().isOk());
+
+        deactivate(JOHN, this.instructorBillToken)
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.flag").value(false))
+                .andExpect(jsonPath("$.code").value(StatusCode.CONFLICT))
+                .andExpect(jsonPath("$.message").value("The student is already deactivated."));
+        assertThat(johnIsEnabled()).isFalse();
+    }
+
+    @Test
+    @DisplayName("Interim reactivation: after deactivation, an assigned instructor's PUT with enabled: true reactivates the student on her team")
+    void testInstructorReactivatesDeactivatedStudentThroughPut() throws Exception {
+        deactivate(JOHN, this.instructorBillToken).andExpect(status().isOk());
+
+        Map<String, Object> studentDto = new HashMap<>();
+        studentDto.put("username", "j.smith@abc.edu");
+        studentDto.put("firstName", "John");
+        studentDto.put("lastName", "Smith");
+        studentDto.put("email", "j.smith@abc.edu");
+        studentDto.put("enabled", true);
+
+        this.mockMvc.perform(put(this.baseUrl + "/students/" + JOHN).contentType(MediaType.APPLICATION_JSON).content(this.jsonMapper.writeValueAsString(studentDto)).accept(MediaType.APPLICATION_JSON).header(HttpHeaders.AUTHORIZATION, this.instructorBillToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.enabled").value(true))
+                .andExpect(jsonPath("$.data.teamId").value(1));
+        assertThat(johnIsEnabled()).isTrue();
     }
 
     @Test

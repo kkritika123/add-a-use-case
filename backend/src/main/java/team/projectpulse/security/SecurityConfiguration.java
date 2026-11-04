@@ -30,6 +30,7 @@ import org.springframework.security.oauth2.server.resource.authentication.JwtAut
 import org.springframework.security.oauth2.server.resource.authentication.JwtGrantedAuthoritiesConverter;
 import org.springframework.security.web.SecurityFilterChain;
 import team.projectpulse.security.authorizationmanagers.*;
+import team.projectpulse.user.UserRepository;
 
 import java.security.KeyPair;
 import java.security.KeyPairGenerator;
@@ -135,7 +136,7 @@ public class SecurityConfiguration {
     }
 
     @Bean
-    public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
+    public SecurityFilterChain securityFilterChain(HttpSecurity http, ActiveAccountJwtAuthenticationConverter activeAccountJwtAuthenticationConverter) throws Exception {
         return http
                 .authorizeHttpRequests(authorizeHttpRequests -> authorizeHttpRequests
                         // Security rules for the /courses/** endpoint.
@@ -318,7 +319,9 @@ public class SecurityConfiguration {
                 .cors(Customizer.withDefaults())
                 .httpBasic(httpBasic -> httpBasic.authenticationEntryPoint(this.customBasicAuthenticationEntryPoint))
                 .oauth2ResourceServer(oauth2ResourceServer -> oauth2ResourceServer
-                        .jwt(Customizer.withDefaults())
+                        // Every request re-checks that the token's account is still active (FR-SEC-active-account),
+                        // so a deactivation takes effect on the next request rather than when the token expires.
+                        .jwt(jwt -> jwt.jwtAuthenticationConverter(activeAccountJwtAuthenticationConverter))
                         .authenticationEntryPoint(this.customBearerTokenAuthenticationEntryPoint)
                         .accessDeniedHandler(this.customBearerTokenAccessDeniedHandler))
                 /* Configures the spring boot application as an OAuth2 Resource Server which authenticates all
@@ -365,6 +368,11 @@ public class SecurityConfiguration {
         JwtAuthenticationConverter jwtAuthenticationConverter = new JwtAuthenticationConverter();
         jwtAuthenticationConverter.setJwtGrantedAuthoritiesConverter(jwtGrantedAuthoritiesConverter);
         return jwtAuthenticationConverter;
+    }
+
+    @Bean
+    public ActiveAccountJwtAuthenticationConverter activeAccountJwtAuthenticationConverter(JwtAuthenticationConverter jwtAuthenticationConverter, UserRepository userRepository) {
+        return new ActiveAccountJwtAuthenticationConverter(jwtAuthenticationConverter, userRepository);
     }
 
     /**

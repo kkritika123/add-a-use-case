@@ -1,11 +1,10 @@
 package team.projectpulse.student;
 
 import org.junit.jupiter.api.AfterEach;
-import team.projectpulse.instructor.Instructor;
+import org.junit.jupiter.api.DisplayName;
 import team.projectpulse.section.Section;
 import team.projectpulse.section.SectionRepository;
 import team.projectpulse.system.UserUtils;
-import team.projectpulse.user.MyUserPrincipal;
 import team.projectpulse.user.userinvitation.UserInvitationService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -18,8 +17,6 @@ import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.domain.Specification;
-import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
-import org.springframework.security.core.context.SecurityContext;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 
@@ -130,14 +127,6 @@ class StudentServiceTest {
         given(this.studentRepository.findById(1)).willReturn(Optional.of(this.students.get(0)));
         given(this.studentRepository.save(any(Student.class))).willReturn(this.students.get(0));
 
-        Instructor instructor = new Instructor();
-        instructor.setRoles("student");
-        MyUserPrincipal myUserPrincipal = new MyUserPrincipal(instructor);
-
-        SecurityContext securityContext = SecurityContextHolder.createEmptyContext();
-        securityContext.setAuthentication(new UsernamePasswordAuthenticationToken(myUserPrincipal, null, myUserPrincipal.getAuthorities()));
-        SecurityContextHolder.setContext(securityContext);
-
         // When
         Student result = this.studentService.updateStudent(1, update);
 
@@ -151,19 +140,12 @@ class StudentServiceTest {
     }
 
     @Test
-    void testInstructorUpdatesStudent() {
+    @DisplayName("An instructor's PUT updates the fields but ignores enabled: false; deactivation has its own endpoint")
+    void testInstructorUpdatesStudentButCannotDeactivateThroughPut() {
         // Given
         Student update = new Student("john", "John (updated)", "Smith (updated)", "j.smith@abc.edu (updated)", "", false, "admin student");
         given(this.studentRepository.findById(1)).willReturn(Optional.of(this.students.get(0)));
-        given(this.studentRepository.save(any(Student.class))).willReturn(this.students.get(0));
-
-        Instructor instructor = new Instructor();
-        instructor.setRoles("instructor");
-        MyUserPrincipal myUserPrincipal = new MyUserPrincipal(instructor);
-
-        SecurityContext securityContext = SecurityContextHolder.createEmptyContext();
-        securityContext.setAuthentication(new UsernamePasswordAuthenticationToken(myUserPrincipal, null, myUserPrincipal.getAuthorities()));
-        SecurityContextHolder.setContext(securityContext);
+        given(this.studentRepository.save(any(Student.class))).willAnswer(invocation -> invocation.getArgument(0));
 
         // When
         Student result = this.studentService.updateStudent(1, update);
@@ -173,8 +155,43 @@ class StudentServiceTest {
         assertThat(result.getFirstName()).isEqualTo(update.getFirstName());
         assertThat(result.getLastName()).isEqualTo(update.getLastName());
         assertThat(result.getEmail()).isEqualTo(update.getEmail());
-//        assertThat(result.getRoles()).isEqualTo(update.getRoles());
-        assertThat(result.isEnabled()).isEqualTo(update.isEnabled());
+        assertThat(result.isEnabled()).isTrue();
+    }
+
+    @Test
+    @DisplayName("Interim reactivation: an instructor's PUT with enabled: true reactivates a deactivated student")
+    void testInstructorReactivatesStudentThroughPut() {
+        // Given
+        Student john = this.students.get(0);
+        john.setEnabled(false);
+        Student update = new Student("john", "John", "Smith", "j.smith@abc.edu", "", true, "student");
+        given(this.studentRepository.findById(1)).willReturn(Optional.of(john));
+        given(this.studentRepository.save(any(Student.class))).willAnswer(invocation -> invocation.getArgument(0));
+        given(this.userUtils.hasRole("ROLE_instructor")).willReturn(true);
+
+        // When
+        Student result = this.studentService.updateStudent(1, update);
+
+        // Then
+        assertThat(result.isEnabled()).isTrue();
+    }
+
+    @Test
+    @DisplayName("A student's own PUT with enabled: true does not reactivate her")
+    void testStudentCannotReactivateHerselfThroughPut() {
+        // Given
+        Student john = this.students.get(0);
+        john.setEnabled(false);
+        Student update = new Student("john", "John", "Smith", "j.smith@abc.edu", "", true, "student");
+        given(this.studentRepository.findById(1)).willReturn(Optional.of(john));
+        given(this.studentRepository.save(any(Student.class))).willAnswer(invocation -> invocation.getArgument(0));
+        given(this.userUtils.hasRole("ROLE_instructor")).willReturn(false);
+
+        // When
+        Student result = this.studentService.updateStudent(1, update);
+
+        // Then
+        assertThat(result.isEnabled()).isFalse();
     }
 
     @Test

@@ -69,16 +69,16 @@ classDiagram
   - `StudentAdministratorAuthorizationManager` in `security/authorizationmanagers/`.
   - `ActiveAccountJwtAuthenticationConverter` in `security/`. It wraps the existing `jwtAuthenticationConverter` (`SecurityConfiguration`).
 - **Backend, changed:**
-  - `StudentService.updateStudent` applies `enabled` only when the caller holds `ROLE_instructor` (the existing check, kept) **and** the value is `true`. `enabled: false` is ignored. See *Deactivation has one path*.
-  - `EvaluationService.addPeerEvaluation` refuses a deactivated evaluatee.
-  - `EvaluationService.generateWeeklyPeerEvaluationReportForSection` keeps a deactivated student only for a week with peer evaluations of her recorded.
+  - `StudentService.updateStudent` applies `enabled` only when the caller holds `ROLE_instructor` (the existing check, kept, now read through `UserUtils.hasRole`) **and** the value is `true`. `enabled: false` is ignored. See *Deactivation has one path*.
+  - `EvaluationService.addPeerEvaluation` refuses a deactivated evaluatee with `PeerEvaluationIllegalArgumentException`.
+  - `EvaluationService.generateWeeklyPeerEvaluationReportForSection` keeps a deactivated student only for a week with peer evaluations of her recorded, asked through a new `PeerEvaluationRepository.existsByWeekAndEvaluateeId`.
   - `UserOwnershipAuthorizationManager`'s student branch also admits the owning course admin.
 - **Frontend:**
   - [`apis/student`](../../frontend/src/apis/student/index.ts) adds `deactivateStudent(studentId)`.
   - [`EditStudentForm.vue`](../../frontend/src/pages/students/EditStudentForm.vue) replaces the `enabled` switch with:
     - a read-only status tag;
     - a **Deactivate** button while the student is active, which opens an `ElMessageBox.confirm` listing the use case's consequences;
-    - an interim **Reactivate** button while she is deactivated, which sends the `PUT` with `enabled: true`.
+    - an interim **Reactivate** button while she is deactivated, which sends the `PUT` with `enabled: true` and the student's values as last loaded, so it does not save the form's unsaved edits.
   - [`SubmitTeamsEvaluations.vue`](../../frontend/src/pages/evaluations/SubmitTeamsEvaluations.vue):
     - **New submission:** the rows it builds leave out teammates with `enabled === false`.
     - **Saved evaluations exist for the week:** they load as today, so an evaluation of her written before deactivation is shown for editing.
@@ -160,7 +160,7 @@ stateDiagram-v2
 | `PATCH /api/v1/students/{studentId}/deactivate` (new) | An instructor assigned to the student's course section, or the course admin who owns its course (BR-student-lifecycle): `StudentAdministratorAuthorizationManager`; its own `HttpMethod.PATCH` matcher, placed with the other `/students/{studentId}` rules, above the `denyAll()` catch-all | none | `200`, `StudentDto` with `enabled: false`, team unchanged | 3a: `403` / `StatusCode.FORBIDDEN` (also for a student, herself included, and for an unknown id: the route refuses first). 3b: `409` / `StatusCode.CONFLICT`, "The student is already deactivated."; the record is unchanged |
 | Every authenticated API route (changed) | A JWT holder | — | as today | Account deactivated after the token was issued, or no longer present: `401` |
 | `PUT /api/v1/students/{studentId}` (changed) | `UserOwnershipAuthorizationManager`: the student herself, an assigned instructor, or the owning course admin | `enabled: true` reactivates when the caller holds `ROLE_instructor` (interim); `enabled: false` is ignored | as today | — |
-| `POST /api/v1/evaluations` (changed) | as today | as today: one peer evaluation per request (the form sends one `POST` per teammate) | as today | Evaluatee deactivated: `IllegalArgumentException` → `400` / `StatusCode.INVALID_ARGUMENT`, "<first name> is deactivated and can no longer be evaluated."; only that request fails, so the other teammates' evaluations are saved |
+| `POST /api/v1/evaluations` (changed) | as today | as today: one peer evaluation per request (the form sends one `POST` per teammate) | as today | Evaluatee deactivated: `PeerEvaluationIllegalArgumentException` (the evaluation slice's own refusal type, as for every other `addPeerEvaluation` check) → `400` / `StatusCode.INVALID_ARGUMENT`, "<first name> is deactivated and can no longer be evaluated."; only that request fails, so the other teammates' evaluations are saved |
 | `GET /api/v1/evaluations/sections/{sectionId}/week/{week}` (changed) | as today | as today | A deactivated student is listed only for a week with peer evaluations of her recorded (BR-inactive-evaluatee) | as today |
 
 `PUT /api/v1/evaluations/{evaluationId}` is unchanged. It still updates an evaluation of a deactivated student written before deactivation, inside the window, because BR-inactive-evaluatee blocks only *new* evaluations.
@@ -202,7 +202,7 @@ For the same reason, `UserOwnershipAuthorizationManager`'s student branch now ad
 
 - **Separate from Save:** the `PATCH` is separate from the form's Save. Unsaved edits in the form are neither saved nor discarded.
 - **Step 6:** `ElMessage.success("<first name> <last name> has been deactivated")`. The dialog stays open and shows the returned status. Closing it emits `close-dialog`, as Cancel does today.
-- **3b:** the shared handler shows the `409` message as a toast, then the form reloads the student, so it shows deactivated and Reactivate.
+- **3b:** the shared handler shows the `409` message as a toast, then the form reloads the student's status (only the status, so unsaved edits stay), so it shows deactivated and Reactivate.
 
 **The team is kept, and nothing cascades.** `deactivateStudent` changes only `enabled`. BR-inactive-evaluatee and BR-submission-owed are enforced where those records are created or computed: the evaluation `POST`, the form, the section report and `SubmissionStatusService`.
 - Rejected: removing her from her team, which would lose her team history and break reactivation.
@@ -260,4 +260,4 @@ Tim Cook (course admin of course 3) is the course admin of another course. John 
 - **A partly saved week** (some teammates evaluated, some not) shows only the saved rows, as today. The form saves the whole set at once, so this arises only from direct API use or a teammate added mid-week. That's existing behavior, outside this use case.
 - **The converter runs wherever a `Bearer` token is sent.** A deactivated user with a stale token gets `401` even on a `permitAll()` route, until the SPA clears the token (it does on the first `401`). Login uses HTTP Basic and is unaffected.
 - **A leaked token for an active account** is still valid for its 2 hours ([TD-jwt-revocation](architectural-design.md#risks-and-technical-debt)). The per-request check covers deactivation only.
-- **OI-33 (b)** describes deactivation as the `updateStudent` toggle. That wording goes stale once this is built, and `/implement` updates it.
+- **OI-33 (b)** described deactivation as the `updateStudent` toggle; `/implement` noted on OI-33 that this use case now has its own endpoint.

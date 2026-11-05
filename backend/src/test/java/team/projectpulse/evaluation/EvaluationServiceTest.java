@@ -12,6 +12,7 @@ import team.projectpulse.system.exception.PeerEvaluationIllegalArgumentException
 import team.projectpulse.team.Team;
 import team.projectpulse.user.MyUserPrincipal;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
@@ -30,6 +31,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.BDDMockito.given;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 
@@ -369,6 +371,28 @@ class EvaluationServiceTest {
         assertThat(throwable)
                 .isInstanceOf(PeerEvaluationIllegalArgumentException.class)
                 .hasMessage("The evaluator and evaluatee must be on the same team.");
+    }
+
+    @Test
+    @DisplayName("BR-inactive-evaluatee: a new evaluation of a deactivated teammate is refused")
+    void testAddPeerEvaluationOfDeactivatedEvaluatee() {
+        // Given
+        LocalDate fixedDate = LocalDate.of(2023, 8, 8);
+        Clock fixedClock = Clock.fixed(fixedDate.atStartOfDay(ZoneId.systemDefault()).toInstant(), ZoneId.systemDefault());
+        given(this.clock.instant()).willReturn(fixedClock.instant());
+        given(this.clock.getZone()).willReturn(fixedClock.getZone());
+
+        this.eric.setEnabled(false);
+        PeerEvaluation newPeerEvaluation = new PeerEvaluation("2023-W31", john, eric, List.of(), "public comment", "private comment");
+
+        // When
+        Throwable throwable = catchThrowable(() -> this.evaluationService.addPeerEvaluation(newPeerEvaluation));
+
+        // Then
+        assertThat(throwable)
+                .isInstanceOf(PeerEvaluationIllegalArgumentException.class)
+                .hasMessage("Eric is deactivated and can no longer be evaluated.");
+        verify(this.evaluationRepository, never()).save(any());
     }
 
     @Test

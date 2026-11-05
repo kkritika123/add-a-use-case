@@ -9,8 +9,6 @@ import jakarta.transaction.Transactional;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.domain.Specification;
-import org.springframework.security.core.Authentication;
-import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
@@ -114,15 +112,32 @@ public class StudentService {
         oldStudent.setLastName(update.getLastName());
         oldStudent.setEmail(update.getEmail());
 
-        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
-
-        // If the user is an admin, then the user can update all the fields
-        if (authentication.getAuthorities().stream().anyMatch(grantedAuthority -> grantedAuthority.getAuthority().equals("ROLE_instructor"))) {
-            oldStudent.setEnabled(update.isEnabled());
-//            oldStudent.setRoles(update.getRoles());
+        // Deactivation has one path, PATCH /students/{studentId}/deactivate (UC-STU-deactivate-student), so
+        // enabled: false is ignored here. enabled: true from an instructor is the interim reactivation path until
+        // UC-STU-reactivate-student brings its own endpoint, whose design removes this branch.
+        if (update.isEnabled() && this.userUtils.hasRole("ROLE_instructor")) {
+            oldStudent.setEnabled(true);
         }
 
         return this.studentRepository.save(oldStudent);
+    }
+
+    /**
+     * UC-STU-deactivate-student: switches the student's account off, and nothing else. She stays on her team and
+     * every record she submitted is kept (BR-student-lifecycle); BR-inactive-evaluatee and BR-submission-owed are
+     * enforced where evaluations and submission status are created or computed. The route rule has already
+     * checked the caller against this student's course section and course, so loading by id is the scoped query.
+     *
+     * @throws StudentAlreadyDeactivatedException extension 3b, the student is already deactivated
+     */
+    public Student deactivateStudent(Integer studentId) {
+        Student student = this.studentRepository.findById(studentId)
+                .orElseThrow(() -> new ObjectNotFoundException("student", studentId));
+        if (!student.isEnabled()) {
+            throw new StudentAlreadyDeactivatedException();
+        }
+        student.setEnabled(false);
+        return this.studentRepository.save(student);
     }
 
     public void deleteStudent(Integer studentId) {

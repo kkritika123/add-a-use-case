@@ -207,21 +207,25 @@ async function prepareStartingPeerEvaluations() {
     peerEvalutions.value = result.data
     isNewSubmission = false
   } else {
-    // If not, create a new set of evaluations
+    // If not, create a new set of evaluations. A deactivated teammate is left out: she can no longer be evaluated
+    // (BR-inactive-evaluatee), and the server refuses a new evaluation of her anyway. Saved evaluations above are
+    // shown as they are, so one written before her deactivation can still be edited.
     isNewSubmission = true
-    peerEvalutions.value = students.value.map((student) => ({
-      week: previousWeek.value,
-      evaluatorId: (userInfoStore.userInfo as Student).id as number,
-      evaluateeId: student.id as number,
-      evaluateeName: `${student.firstName} ${student.lastName}`,
-      ratings: criteria.value.map((criterion) => ({
-        criterionId: criterion.criterionId as number,
-        criterion: criterion.criterion,
-        actualScore: 10 // Default score, can be changed by the user
-      })),
-      publicComment: '',
-      privateComment: ''
-    }))
+    peerEvalutions.value = students.value
+      .filter((student) => student.enabled !== false)
+      .map((student) => ({
+        week: previousWeek.value,
+        evaluatorId: (userInfoStore.userInfo as Student).id as number,
+        evaluateeId: student.id as number,
+        evaluateeName: `${student.firstName} ${student.lastName}`,
+        ratings: criteria.value.map((criterion) => ({
+          criterionId: criterion.criterionId as number,
+          criterion: criterion.criterion,
+          actualScore: 10 // Default score, can be changed by the user
+        })),
+        publicComment: '',
+        privateComment: ''
+      }))
   }
 }
 

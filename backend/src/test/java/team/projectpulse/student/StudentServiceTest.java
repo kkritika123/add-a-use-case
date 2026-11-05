@@ -146,6 +146,7 @@ class StudentServiceTest {
         Student update = new Student("john", "John (updated)", "Smith (updated)", "j.smith@abc.edu (updated)", "", false, "admin student");
         given(this.studentRepository.findById(1)).willReturn(Optional.of(this.students.get(0)));
         given(this.studentRepository.save(any(Student.class))).willAnswer(invocation -> invocation.getArgument(0));
+        lenient().when(this.userUtils.hasRole("ROLE_instructor")).thenReturn(true);
 
         // When
         Student result = this.studentService.updateStudent(1, update);

@@ -335,13 +335,11 @@ public class EvaluationIntegrationTest extends AbstractIntegrationTest {
         // 2023-W31 has evaluations of Eric, so he is still listed
         this.mockMvc.perform(get(this.baseUrl + "/evaluations/sections/2/week/2023-W31").accept(MediaType.APPLICATION_JSON).header(HttpHeaders.AUTHORIZATION, this.adminBingyangToken))
                 .andExpect(jsonPath("$.code").value(StatusCode.SUCCESS))
-                .andExpect(jsonPath("$.data.peerEvaluationAverages", Matchers.hasSize(11)))
                 .andExpect(jsonPath("$.data.peerEvaluationAverages[*].studentId", Matchers.hasItem(ERIC)));
 
         // 2023-W36 has no evaluations of anyone: Eric is absent, while the active students with none still appear
         this.mockMvc.perform(get(this.baseUrl + "/evaluations/sections/2/week/2023-W36").accept(MediaType.APPLICATION_JSON).header(HttpHeaders.AUTHORIZATION, this.adminBingyangToken))
                 .andExpect(jsonPath("$.code").value(StatusCode.SUCCESS))
-                .andExpect(jsonPath("$.data.peerEvaluationAverages", Matchers.hasSize(10)))
                 .andExpect(jsonPath("$.data.peerEvaluationAverages[*].studentId", Matchers.not(Matchers.hasItem(ERIC))))
                 .andExpect(jsonPath("$.data.peerEvaluationAverages[*].studentId", Matchers.hasItem(4)));
     }

@@ -199,10 +199,10 @@ async function reactivate() {
 async function updateExistingStudent() {
   await studentForm.value!.validate() // Validate the form
 
+  // No `enabled`: Save never changes the status (a stale form could otherwise reactivate); only Reactivate does
   const updatedStudent: Student = {
     id: studentBeingEdited.value.id,
     username: studentBeingEdited.value.username,
-    enabled: studentBeingEdited.value.enabled,
     firstName: studentBeingEdited.value.firstName,
     lastName: studentBeingEdited.value.lastName,
     email: studentBeingEdited.value.email
